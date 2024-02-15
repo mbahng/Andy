@@ -32,13 +32,12 @@ class GeneticDataset(Dataset):
             if not drop_level in taxonomy_level_array:
                 raise ValueError(f"drop_level must be one of {taxonomy_level_array}")
             self.data = self.data[self.data[drop_level] != "not_classified"]
-        
+
         if allowed_classes:
             for allowed_class in allowed_classes:
                 level, classes = allowed_class
                 if not level in taxonomy_level_array:
                     raise ValueError(f"level must be one of {taxonomy_level_array}")
-                print(classes)
                 self.data = self.data[self.data[level].isin(classes)]
 
     def __len__(self):
