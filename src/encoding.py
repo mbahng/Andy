@@ -29,6 +29,7 @@ def cgr_encoding(dna_seq):
     points = [prev_point]
     
     for a in dna_seq:
+        if a not in cgt_mapping: continue
         point = 0.5 * (prev_point + cgt_mapping[a])
         points.append(point)
         prev_point = point
