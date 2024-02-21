@@ -1,0 +1,3 @@
+[submodule "src/ProtoPNet"]
+	path = src/ProtoPNet
+	url = https://github.com/cfchen-duke/ProtoPNet
