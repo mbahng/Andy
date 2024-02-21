@@ -1,11 +1,12 @@
 from src.data import * 
 
-dataset = Cub2011(root="data", train=True)
+dataset = CubDataset()
 
-for i in range(100): 
-    print(dataset[0]) 
+with open(os.path.join("data/CUB_200_2011", "classes.txt"), "r") as f: 
+    print([elem.split(".")[1] for elem in f.read().splitlines()])
 
-for i in range(100): 
-    print(dataset[0])
+
+
+
 
 

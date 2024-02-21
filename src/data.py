@@ -7,11 +7,11 @@ import os
 from PIL import Image
 
 class BioscanDataset(Dataset): 
-
-    def __init__(self, train:bool = True): 
+    def __init__(self, train = True, transform = None): 
 
         self.base_path = os.path.join("data", "BIOSCAN-1M")
         self.image_path = os.path.join(self.base_path, "images", "cropped_256")
+        self.transform = transform
         self.taxonomy_level_array = ["phylum", "class", "order", "family", "subfamily", "tribe", "genus", "species", "subspecies"] 
 
         if train: 
@@ -28,15 +28,23 @@ class BioscanDataset(Dataset):
         genetics = self.data.iloc[idx]["nucraw"]
         taxonomy = [self.data.iloc[idx][c] for c in self.taxonomy_level_array]
 
+        if self.transform is not None: 
+            image = self.transform(image)
+
         return image, genetics, taxonomy
 
-class Cub2011(Dataset):
+class CubDataset(Dataset):
     base_folder = os.path.join("CUB_200_2011", "images")
 
-    def __init__(self, root, train=True):
-        self.root = os.path.expanduser(root)
+    def __init__(self, train=True, transform = None):
+        self.root = os.path.expanduser("./data")
         self.loader = default_loader
         self.train = train
+        self.transform = transform
+
+        with open(os.path.join("data", "CUB_200_2011", "classes.txt"), "r") as f: 
+            self.classes = [elem.split(".")[1] for elem in f.read().splitlines()] 
+
 
         self._load_metadata()
 
@@ -78,26 +86,11 @@ class Cub2011(Dataset):
         target = sample.target - 1  # Targets start at 1 by default, so shift to 0
         img = self.loader(path)
 
-        return img, target
+        if self.transform is not None:
+            img = self.transform(img)
 
-# class CubDataset(Dataset): 
-#
-#     def __init__ (self, train:bool = True): 
-#
-#         self.base_path = os.path.join("data", "CUB_200_2011")
-#
-#         self.image_ids = pd.read_csv(os.path.join(self.base_path, "images.txt"), sep=' ', header=None, names=["id", "file_name"])
-#
-#         if train: 
-#
-#
-#         pass 
-#
-#     def __len__(self): 
-#         pass 
-#
-#     def __getitem__(self, idx): 
-#         pass 
+        return img, target
+    
 
 class GeneticDataset(Dataset):
     """
@@ -113,7 +106,6 @@ class GeneticDataset(Dataset):
         Returns:
             (genetics, label): A tuple containing the genetic data and the label (phylum, class, order, family, subfamily, tribe, genus, species, subspecies)
     """
-
     def __init__(self,
                  source: str,
                  sep: str = "\t",
