@@ -1,7 +1,8 @@
 
 import pandas as pd
+import torch
 from torch.utils.data import Dataset
-from src.utils import taxonomy_level_array
+from src.utils import taxonomy_level_array, taxonomy_level_index_map
 from torchvision.datasets.folder import default_loader
 import os
 from PIL import Image
@@ -102,6 +103,8 @@ class GeneticDataset(Dataset):
             transform (callable, optional): Optional transforms to be applied to the genetic data. Default is None.
             drop_level (str): If supplied, the dataset will drop all rows where the given taxonomy level is not present. Default is None.
             allowed_classes ([(level, [class])]): If supplied, the dataset will only include rows where the given taxonomy level is within the given list of classes. Default is None. Use for validation and test sets.
+            one_label (str): If supplied, the label will be the value of one_class
+            classes: list[int]
             
         Returns:
             (genetics, label): A tuple containing the genetic data and the label (phylum, class, order, family, subfamily, tribe, genus, species, subspecies)
@@ -112,9 +115,13 @@ class GeneticDataset(Dataset):
                  transform=None,
                  drop_level: str = None,
                  allowed_classes: list[tuple[str, list[str]]]=None,
+                 one_label: str = None,
+                 classes: list[str] = None
         ):
         self.data = pd.read_csv(source, sep=sep)
         self.transform = transform
+        self.one_label = one_label
+        self.classes = classes
 
         if drop_level:
             if not drop_level in taxonomy_level_array:
@@ -128,6 +135,16 @@ class GeneticDataset(Dataset):
                     raise ValueError(f"level must be one of {taxonomy_level_array}")
                 self.data = self.data[self.data[level].isin(classes)]
 
+        if self.one_label:
+            if self.classes:
+                self.classes = {
+                    c: i for i,c in enumerate(classes)
+                }
+            else:
+                self.classes = {
+                    c: i for i,c in enumerate(self.get_classes(self.one_label)[0])
+                }
+
     def __len__(self):
         return len(self.data)
     
@@ -139,6 +156,10 @@ class GeneticDataset(Dataset):
         if self.transform:
             genetics = self.transform(genetics)
 
+        if self.one_label:
+            label = label[taxonomy_level_array.index(self.one_label)]
+            label = torch.tensor(self.classes[label])
+            
         return genetics, label
     
     def get_classes(self, class_name: str):

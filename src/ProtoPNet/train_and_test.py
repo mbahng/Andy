@@ -1,7 +1,7 @@
 import time
 import torch
 
-from utils.helpers import list_of_distances, make_one_hot
+from src.ProtoPNet.utils.helpers import list_of_distances, make_one_hot
 
 def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l1_mask=True,
                    coefs=None, log=print):
@@ -20,6 +20,9 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
     # separation cost is meaningful only for class_specific
     total_separation_cost = 0
     total_avg_separation_cost = 0
+
+    class_correct_counts = None
+    class_guess_counts = None
 
     for i, (image, label) in enumerate(dataloader):
         input = image.cuda()
@@ -79,6 +82,15 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
             total_separation_cost += separation_cost.item()
             total_avg_separation_cost += avg_separation_cost.item()
 
+            # Calculate Balanced Accuracy
+            if class_correct_counts == None:
+                class_correct_counts = torch.zeros(output.shape[1], device=output.device)
+                class_guess_counts = torch.zeros(output.shape[1], device=output.device)
+
+            for i in range(output.shape[1]):
+                class_correct_counts[i] += torch.sum((predicted == target) & (target == i))
+                class_guess_counts[i] += torch.sum(target == i)
+
         # compute gradient and do SGD step
         if is_train:
             if class_specific:
@@ -120,6 +132,8 @@ def _train_or_test(model, dataloader, optimizer=None, class_specific=True, use_l
     with torch.no_grad():
         p_avg_pair_dist = torch.mean(list_of_distances(p, p))
     log('\tp dist pair: \t{0}'.format(p_avg_pair_dist.item()))
+    log('\tbalanced accu:\t{0}'.format(torch.mean(class_correct_counts / class_guess_counts).item()))
+    log(f'\tmode: \t{"train" if is_train else "test"}')
 
     return n_correct / n_examples
 
