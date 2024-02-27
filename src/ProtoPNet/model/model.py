@@ -3,12 +3,12 @@ import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
 
-from model.resnet_features import resnet18_features, resnet34_features, resnet50_features, resnet101_features, resnet152_features
-from model.densenet_features import densenet121_features, densenet161_features, densenet169_features, densenet201_features
-from model.vgg_features import vgg11_features, vgg11_bn_features, vgg13_features, vgg13_bn_features, vgg16_features, vgg16_bn_features,\
+from resnet_features import resnet18_features, resnet34_features, resnet50_features, resnet101_features, resnet152_features
+from densenet_features import densenet121_features, densenet161_features, densenet169_features, densenet201_features
+from vgg_features import vgg11_features, vgg11_bn_features, vgg13_features, vgg13_bn_features, vgg16_features, vgg16_bn_features,\
                          vgg19_features, vgg19_bn_features
 
-from postprocessing.receptive_field import compute_proto_layer_rf_info_v2
+from receptive_field import compute_proto_layer_rf_info_v2
 
 base_architecture_to_features = {'resnet18': resnet18_features,
                                  'resnet34': resnet34_features,
@@ -28,13 +28,12 @@ base_architecture_to_features = {'resnet18': resnet18_features,
                                  'vgg19': vgg19_features,
                                  'vgg19_bn': vgg19_bn_features}
 
-
 class PPNet(nn.Module):
-
     def __init__(self, features, img_size, prototype_shape,
                  proto_layer_rf_info, num_classes, init_weights=True,
                  prototype_activation_function='log',
-                 add_on_layers_type='bottleneck'):
+                 add_on_layers_type='bottleneck',
+                 genetics_mode=False):
 
         super(PPNet, self).__init__()
         self.img_size = img_size
@@ -73,13 +72,14 @@ class PPNet(nn.Module):
         elif features_name.startswith('DENSE'):
             first_add_on_layer_in_channels = \
                 [i for i in features.modules() if isinstance(i, nn.BatchNorm2d)][-1].num_features
+        elif genetics_mode:
+            first_add_on_layer_in_channels = [i for i in features.modules() if isinstance(i, nn.Conv2d)][-1].out_channels
         else:
             raise Exception('other base base_architecture NOT implemented')
 
         if add_on_layers_type == 'bottleneck':
             add_on_layers = []
             current_in_channels = first_add_on_layer_in_channels
-            
             while (current_in_channels > self.prototype_shape[1]) or (len(add_on_layers) == 0):
                 current_out_channels = max(self.prototype_shape[1], (current_in_channels // 2))
                 add_on_layers.append(nn.Conv2d(in_channels=current_in_channels,
@@ -96,14 +96,13 @@ class PPNet(nn.Module):
                     add_on_layers.append(nn.Sigmoid())
                 current_in_channels = current_in_channels // 2
             self.add_on_layers = nn.Sequential(*add_on_layers)
-            
         else:
             self.add_on_layers = nn.Sequential(
                 nn.Conv2d(in_channels=first_add_on_layer_in_channels, out_channels=self.prototype_shape[1], kernel_size=1),
                 nn.ReLU(),
                 nn.Conv2d(in_channels=self.prototype_shape[1], out_channels=self.prototype_shape[1], kernel_size=1),
                 nn.Sigmoid()
-            )
+                )
         
         self.prototype_vectors = nn.Parameter(torch.rand(self.prototype_shape),
                                               requires_grad=True)
@@ -196,18 +195,18 @@ class PPNet(nn.Module):
         because we need to return min_distances
         '''
         # global min pooling
-        min_distances = -F.max_pool2d(-distances, kernel_size=(distances.size()[2], distances.size()[3]))
+        min_distances = -F.max_pool2d(-distances,
+                                      kernel_size=(distances.size()[2],
+                                                   distances.size()[3]))
         min_distances = min_distances.view(-1, self.num_prototypes)
         prototype_activations = self.distance_2_similarity(min_distances)
         logits = self.last_layer(prototype_activations)
-        
         return logits, min_distances
 
     def push_forward(self, x):
         '''this method is needed for the pushing operation'''
         conv_output = self.conv_features(x)
         distances = self._l2_convolution(conv_output)
-        
         return conv_output, distances
 
     def prune_prototypes(self, prototypes_to_prune):
@@ -272,7 +271,6 @@ class PPNet(nn.Module):
             + incorrect_class_connection * negative_one_weights_locations)
 
     def _initialize_weights(self):
-        
         for m in self.add_on_layers.modules():
             if isinstance(m, nn.Conv2d):
                 # every init technique has an underscore _ in the name

@@ -1,7 +1,7 @@
 """This script trains a model to classify families of Diptera using a one-hot encoding of the genetic data."""
 
 from src.data import *
-from src.transformations import *
+from src.transformations import GeneticOneHot
 from src.models import *
 from src.utils import *
 from torch.utils.data import DataLoader, random_split
@@ -11,28 +11,28 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 TAXONOMY_NAME = "family"
 ORDER_NAME = "Diptera"
 CHOP_LENGTH = 720
-FILE_NAME = "onehot_diptera_family.pth"
+FILE_NAME_BASE = "onehot_blackbox_128_3conv"
 
 # Create an instance of the transformation class
-t = GeneticOneHot(length=CHOP_LENGTH, zero_encode_unknown=True, include_height_channel=False)
+t = GeneticOneHot(length=CHOP_LENGTH, zero_encode_unknown=True, include_height_channel=True)
 
 # NOTE: Data files are available in the Google Drive. They're split 80/20 into train and test sets, from samples in the restrictive BIOSCAN dataset.
 
 # Create a training dataset, dropping all samples that don't have a family label, and only allowing the order Diptera
-d_train = GeneticDataset("data/train.tsv", transform=t, drop_level=TAXONOMY_NAME, allowed_classes=[("order", [ORDER_NAME])])
+d_train = GeneticDataset("data/BIOSCAN-1M/small_diptera_family-train.tsv", transform=t, drop_level=TAXONOMY_NAME, allowed_classes=[("order", [ORDER_NAME])])
 
 # Create a test dataset, dropping all samples that don't have a family label, only allowing the order Diptera, and only allowing the families present in the training set
-d_test = GeneticDataset("data/test.tsv", transform=t, drop_level=TAXONOMY_NAME, allowed_classes=[("order", [ORDER_NAME]), ("family", d_train.get_classes(TAXONOMY_NAME)[0])])
+d_val = GeneticDataset("data/BIOSCAN-1M/small_diptera_family-validation.tsv", transform=t, drop_level=TAXONOMY_NAME, allowed_classes=[("order", [ORDER_NAME]), ("family", d_train.get_classes(TAXONOMY_NAME)[0])])
 
 # Create data loaders
 train_dl = DataLoader(d_train, batch_size=128, shuffle=True)
-test_dl = DataLoader(d_test, batch_size=32, shuffle=True)
+val_dl = DataLoader(d_val, batch_size=32, shuffle=True)
 
 classes, sizes = d_train.get_classes(TAXONOMY_NAME)
 print(f"Classes: {classes}")
 
 # Create the model
-model = GeneticCNN1D(CHOP_LENGTH, len(classes))
+model = GeneticCNN2D(CHOP_LENGTH, len(classes))
 model.to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
@@ -81,7 +81,7 @@ for epoch in range(EPOCHS):
     total_guesses = [0 for _ in range(len(classes))]
 
     with torch.no_grad():
-        for data in test_dl:
+        for data in val_dl:
             inputs, labels = data
             # Convert labels to the same integers as the training set
             labels = [classes.index(l) for l in labels[taxonomy_level_index_map[TAXONOMY_NAME]]]
@@ -100,5 +100,6 @@ for epoch in range(EPOCHS):
     print(f"Epoch {epoch + 1} balanced accuracy: {balanced_accuracy}")
     print(f"Accuracy by class: {accuracy}")
 
-# Save the model
-torch.save(model.state_dict(), "models/{FILE_NAME}")
+    # Save the model
+    if epoch > 5:
+        torch.save(model.state_dict(), f"models/{FILE_NAME_BASE}_{epoch + 1}.pth")

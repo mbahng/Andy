@@ -1,7 +1,7 @@
 from typing import Any
 import torch
 import torch.nn.functional as F
-from encoding import cgr_encoding
+from src.encoding import cgr_encoding
 
 # Genetics Transformations
 class GeneticOneHot(object):
