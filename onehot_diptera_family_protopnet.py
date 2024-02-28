@@ -11,7 +11,12 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 TAXONOMY_NAME = "family"
 ORDER_NAME = "Diptera"
 CHOP_LENGTH = 720
-FILE_NAME_BASE = "onehot_128_3conv"
+FILE_NAME_BASE = "onehot_128_4conv_30wide"
+
+model_dir = "./models/ProtoPNet"
+
+from src.ProtoPNet.utils.log import create_logger
+log, logclose = create_logger(log_filename=os.path.join(model_dir, f'{FILE_NAME_BASE}.log'))
 
 # Create an instance of the transformation class
 t = GeneticOneHot(length=CHOP_LENGTH, zero_encode_unknown=True, include_height_channel=True)
@@ -52,7 +57,7 @@ for epoch in range(EPOCHS):
     for i, data in enumerate(train_dl, 0):
         inputs, labels = data
         # Convert labels to integers
-        labels = [classes.index(l) for l in labels]
+        # labels = [classes.index(l) for l in labels]
         # labels = [classes.index(l) for l in labels[taxonomy_level_index_map[TAXONOMY_NAME]]]
         labels = torch.tensor(labels, dtype=torch.long)
         inputs, labels = inputs.to(device), labels.to(device)
@@ -71,7 +76,7 @@ for epoch in range(EPOCHS):
         total_guesses += len(y_pred)
 
         if i % 10 == 0:
-            print(f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 10:.3f} accuracy: {correct_guesses / total_guesses}")
+            log(f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 10:.3f} accuracy: {correct_guesses / total_guesses}")
             running_loss = 0.0
     
     # Evaluate on test set with balanced accuracy
@@ -83,8 +88,6 @@ for epoch in range(EPOCHS):
         for data in val_dl:
             inputs, labels = data
             # Convert labels to the same integers as the training set
-            labels = [classes.index(l) for l in labels[taxonomy_level_index_map[TAXONOMY_NAME]]]
-            labels = torch.tensor(labels, dtype=torch.long)
             inputs, labels = inputs.to(device), labels.to(device)
 
             outputs = model(inputs)
@@ -96,14 +99,13 @@ for epoch in range(EPOCHS):
     
     accuracy = [correct_guesses[i] / max(1, total_guesses[i]) for i in range(len(classes))]
     balanced_accuracy = sum(accuracy) / len(classes)
-    print(f"Epoch {epoch + 1} balanced accuracy: {balanced_accuracy}")
-    print(f"Accuracy by class: {accuracy}")
+    log(f"Epoch {epoch + 1} balanced accuracy: {balanced_accuracy}")
 
     # Save the model
     if epoch >= 5:
         torch.save(model.state_dict(), f"models/Blackbox/{FILE_NAME_BASE}_{epoch + 1}.pth")
 
-print("Finished Blackbox Training")
+log("Finished Blackbox Training")
 
 # =============================================================================
 
@@ -114,14 +116,10 @@ import torch
 import src.ProtoPNet.train_and_test as tnt
 import src.ProtoPNet.utils.save as save
 
-from src.ProtoPNet.utils.log import create_logger
 import os
 
 from src.ProtoPNet.utils.settings import base_architecture, img_size, prototype_shape, num_classes, \
                      prototype_activation_function, add_on_layers_type, experiment_run, train_batch_size, test_batch_size
-
-model_dir = "./models/ProtoPNet"
-log, logclose = create_logger(log_filename=os.path.join(model_dir, 'train.log'))
 
 TAXONOMY_NAME = "family"
  
