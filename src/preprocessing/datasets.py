@@ -2,40 +2,78 @@
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
-from src.utils import taxonomy_level_array, taxonomy_level_index_map
+from src.utils.taxonomy import taxonomy_level_array, taxonomy_level_index_map
 from torchvision.datasets.folder import default_loader
 import os
 from PIL import Image
 
 class BioscanDataset(Dataset): 
-    def __init__(self, train = True, transform = None): 
+    '''
+    A dataset for the BIOSCAN-1M dataset. The dataset is a combination of images and genetic data. The genetic data is a string of nucleotides, including base pairs A, C, G, T and an unknown character N. 
+    returns (Image:PIL.JpegImagePlugin.JpegImageFile, genetics:str, label:str)
+    '''
 
+    def __init__(self, train = True, transform = None, size:str = "small", min_balance_count = 100, seed=0): 
         self.base_path = os.path.join("data", "BIOSCAN-1M")
         self.image_path = os.path.join(self.base_path, "images", "cropped_256")
+        self.file_path = os.path.join(self.base_path, "BIOSCAN_Insect_Dataset_metadata.tsv")
+        self.min_balance_count = min_balance_count      # the minimum number of samples for each class
         self.transform = transform
-        self.taxonomy_level_array = ["phylum", "class", "order", "family", "subfamily", "tribe", "genus", "species", "subspecies"] 
+        self.train = train
+        self.seed = seed
 
-        if train: 
-            self.data = pd.read_csv(os.path.join(self.base_path, "train.tsv"), sep='\t')
-        else: 
-            self.data = pd.read_csv(os.path.join(self.base_path, "test.tsv"), sep='\t')
+        assert size in ["small" , "medium", "large"]
+        self.size = size
+        self.get_dataset()
+
 
     def __len__(self): 
         return len(self.data) 
+
+    def random_sample(self, group):
+        if len(group) < self.min_balance_count:
+            # print(f"{group['family'].iloc[0]} does not have enough samples")
+            pass
+
+        return group.sample(n=min(self.min_balance_count, len(group)), random_state=self.seed)
+
+    def get_dataset(self): 
+        self.data = pd.read_csv(self.file_path, sep='\t')
+        self.data.drop(columns=['copyright_institution', 'photographer', 'author', 'copyright_contact', 'copyright_license', 'copyright_holder', 'processid', 'uri', 'phylum', 'class', 'subfamily', 'tribe', 'genus', 'species', 'subspecies', 'name', 'order', 'large_diptera_family', 'medium_diptera_family', 'small_diptera_family'], inplace=True)
+        
+        if self.train: 
+            self.data = self.data[self.data[f'{self.size}_insect_order'] == 'train']
+        else: 
+            self.data = self.data[self.data[f'{self.size}_insect_order'] == 'test']
+
+        available_family_df = self.data['family'].value_counts()[self.data['family'].value_counts() > self.min_balance_count]
+        available_family = available_family_df.index.tolist()
+        available_family.remove('not_classified')
+        self.data = self.data[self.data['family'].isin(available_family)]
+
+        unrelevant_sizes = ["small", "medium", "large"]
+        unrelevant_sizes.remove(self.size)
+        self.data.drop(columns=[f"{size}_insect_order" for size in unrelevant_sizes], inplace=True)
+
+        self.data = self.data.groupby('family', group_keys=False).apply(lambda x: self.random_sample(x))
 
     def __getitem__(self, idx): 
 
         image = Image.open(os.path.join(self.image_path, self.data.iloc[idx]["image_file"]))
         genetics = self.data.iloc[idx]["nucraw"]
-        taxonomy = [self.data.iloc[idx][c] for c in self.taxonomy_level_array]
+        label = self.data.iloc[idx]["family"]
 
         if self.transform is not None: 
             image = self.transform(image)
 
-        return image, genetics, taxonomy
+        return image, genetics, label
 
 class CubDataset(Dataset):
-    base_folder = os.path.join("CUB_200_2011", "images")
+    '''
+    returns (Image:PIL.Image.Image, label:int)
+    '''
+
+    base_folder = os.path.join("data", "CUB_200_2011", "images")
 
     def __init__(self, train=True, transform = None):
         self.root = os.path.expanduser("./data")
@@ -92,7 +130,6 @@ class CubDataset(Dataset):
 
         return img, target
     
-
 class GeneticDataset(Dataset):
     """
         A dataset class for the BIOSCAN genetic data. Samples are unpadded strings of nucleotides, including base pairs A, C, G, T and an unknown character N.

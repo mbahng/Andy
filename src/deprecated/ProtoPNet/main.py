@@ -20,8 +20,6 @@ from utils.log import create_logger
 from preprocessing.preprocess import mean, std, preprocess_input_function
 
 
-
-
 parser = argparse.ArgumentParser()
 parser.add_argument('-gpuid', nargs=1, type=str, default='0') # python3 main.py -gpuid=0,1,2,3
 args = parser.parse_args()
