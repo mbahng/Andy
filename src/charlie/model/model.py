@@ -1,3 +1,16 @@
+"""
+Note to Muchang:
+
+The following things have been modified:
+- A couple of arguments
+- Much of the init function
+- forward
+- cosine_similary
+- push_forward
+
+(I believe that's all)
+"""
+
 import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
