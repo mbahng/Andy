@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-from ProtoPNet.charlie.model.model import PPNet
+from src.model.model import PPNet
 
 def make_cnn(): 
     pass
