@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
-from src.ProtoPNet.model.model import PPNet
+from ProtoPNet.charlie.model.model import PPNet
 
 def make_cnn(): 
     pass
@@ -29,6 +29,8 @@ class GeneticCNN2D(nn.Module):
     Layers were chosen arbitrarily, and should be optimized. I have no idea what I'm doing.
     """
 
+    # Drop last layer and load weights into Proto Layer
+
     def __init__(self, length:int, class_count:int, include_connected_layer:bool):
         super().__init__()
         self.conv1 = nn.Conv2d(4, 16, kernel_size=(1,3), padding=(0,1))
@@ -45,7 +47,7 @@ class GeneticCNN2D(nn.Module):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
         x = self.pool(F.relu(self.conv3(x)))
-        x = self.pool3(F.relu(self.conv4(x)))
+        x = F.relu(self.conv4(x))
 
         if hasattr(self, 'fc1'):
             x = torch.flatten(x, 1)
@@ -53,7 +55,7 @@ class GeneticCNN2D(nn.Module):
             # return F.log_softmax(x, dim=1)
         return x
     
-def construct_genetic_ppnet(length:int=720, num_classes:int=10, prototype_shape:int=(600, 24, 1, 1), model_path:str=None,prototype_activation_function='log'):
+def construct_genetic_ppnet(length:int=720, num_classes:int=10, prototype_shape:int=(600, 24, 1, 1), model_path:str=None, prototype_activation_function='log', use_cosine=False):
     m = GeneticCNN2D(length, num_classes, include_connected_layer=False)
 
     # Remove the fully connected layer
@@ -63,8 +65,4 @@ def construct_genetic_ppnet(length:int=720, num_classes:int=10, prototype_shape:
             del weights[k]
     m.load_state_dict(weights)
 
-    return PPNet(m, (4, length), prototype_shape, None, num_classes, False, prototype_activation_function, None, True)
-
-
-
-
+    return PPNet(m, (4, 1, length), prototype_shape, None, num_classes, False, prototype_activation_function, None, True, use_cosine=use_cosine)
