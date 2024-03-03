@@ -1,10 +1,13 @@
 """This scripts trains a black box model on Genetic Data, saves it. Then trains a ProtoPNet model."""
 
-from src.preprocessing.datasets import *
-from src.transformations import GeneticOneHot
-from src.models import *
-from src.utils import *
+from preprocessing.datasets import *
+from transformations import GeneticOneHot
+from models import *
+from utils import *
 from torch.utils.data import DataLoader, random_split
+from utils.log import create_logger
+
+
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 # Configuration
@@ -14,9 +17,8 @@ CHOP_LENGTH = 720
 # The blackbox model will be saved to model_dir/{FILE_NAME_BASE}_{EPOCH}.pth
 FILE_NAME_BASE = "onehot_128_4conv_30wide_40prototypes_per_class"
 
-model_dir = "./models/ProtoPNet"
+model_dir = "./saved_models/cnn"
 
-from src.utils.log import create_logger
 log, logclose = create_logger(log_filename=os.path.join(model_dir, f'{FILE_NAME_BASE}.log'))
 
 # Create an instance of the transformation class
@@ -34,8 +36,7 @@ train_dl = DataLoader(d_train, batch_size=128, shuffle=True)
 val_dl = DataLoader(d_val, batch_size=32, shuffle=True)
 
 # Create the model
-model = GeneticCNN2D(CHOP_LENGTH, len(classes), include_connected_layer=True)
-model.to(device)
+model = GeneticCNN2D(CHOP_LENGTH, len(classes), include_connected_layer=True).cuda() 
 
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
@@ -43,6 +44,9 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 class_weights = 1 / torch.tensor(sizes, dtype=torch.float)
 class_weights = class_weights / class_weights.sum()
 criterion = torch.nn.CrossEntropyLoss(weight=class_weights).to(device)
+
+conv1 = nn.Conv2d(4, 16, kernel_size=(1,3), padding=(0,1))
+
 
 # Training loop
 EPOCHS = 7
@@ -99,7 +103,7 @@ for epoch in range(EPOCHS):
 
     # Save the model
     if epoch >= 5:
-        torch.save(model.state_dict(), f"models/Blackbox/{FILE_NAME_BASE}_{epoch + 1}.pth")
+        torch.save(model.state_dict(), f"pretrained_models/{FILE_NAME_BASE}_{epoch + 1}.pth")
 
 log("Finished Blackbox Training")
 
@@ -114,14 +118,12 @@ import src.utils.save as save
 
 import os
 
-from src.utils.settings import base_architecture, img_size, prototype_shape, num_classes, \
-                     prototype_activation_function, add_on_layers_type, experiment_run, train_batch_size, test_batch_size
-
 TAXONOMY_NAME = "family"
  
 prototypes_per_class = 40
 # latent_size = (128, 1, 720 // 8)
 latent_size = 720 // 8
+
 
 # Usually, you don't want to retrain the blackbox model, so you can just load it from the last epoch. This is the file name base for the blackbox model that you want to use.
 # Just uncomment this line and the break statement in the blackbox training loop to skip that step.

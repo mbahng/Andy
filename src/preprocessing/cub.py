@@ -5,6 +5,16 @@ import Augmentor
 import torch
 import shutil
 
+def preprocess_cub(organize=False):
+    print("====== Preprocessing CUB ======")
+    crop_images() 
+    train_test_split()
+    if organize: 
+        organize_images(os.path.join("data", "CUB_200_2011", "cub200_cropped", "train_cropped"))
+        organize_images(os.path.join("data", "CUB_200_2011", "cub200_cropped", "test_cropped"))
+    augment_train_images()
+    print("===============================")
+
 mean = (0.485, 0.456, 0.406)
 std = (0.229, 0.224, 0.225)
 
@@ -15,7 +25,7 @@ def preprocess(x, mean, std):
         y[:, i, :, :] = (x[:, i, :, :] - mean[i]) / std[i]
     return y
 
-def preprocess_input_function(x):
+def preprocess_cub_input_function(x):
     '''
     allocate new tensor like x and apply the normalization used in the
     pretrained model

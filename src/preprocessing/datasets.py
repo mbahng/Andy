@@ -1,11 +1,94 @@
-
 import pandas as pd
 import torch
 from torch.utils.data import Dataset
-from src.utils.taxonomy import taxonomy_level_array, taxonomy_level_index_map
+from preprocessing.taxonomy import taxonomy_level_array, taxonomy_level_index_map
 from torchvision.datasets.folder import default_loader
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
+
 import os
 from PIL import Image
+from preprocessing.bioscan import preprocess_bioscan 
+from preprocessing.cub import preprocess_cub
+from preprocessing.transformations import GeneticOneHot
+
+def prepare_dataset(args): 
+    if args.dataset == "cub": 
+        preprocess_cub() 
+    elif args.dataset == "bioscan": 
+        preprocess_bioscan()
+    else: 
+        raise Exception("Invalid Dataset")
+
+def get_dataloaders(cfg, log): 
+    train_loader, train_push_loader, test_loader = None, None, None
+
+    log("===== Getting Relevant Dataloaders =====") 
+
+    if cfg.DATASET.NAME == "cub":
+
+        normalize = transforms.Normalize(
+            mean=cfg.DATASET.TRANSFORM_MEAN, 
+            std=cfg.DATASET.TRANSFORM_STD
+        )
+        # all datasets
+        # train set
+        train_dataset = datasets.ImageFolder(
+            cfg.DATASET.TRAIN_DIR,
+            transforms.Compose([
+                transforms.Resize(size=(cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE)),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=cfg.DATASET.TRAIN_BATCH_SIZE, shuffle=True,
+            num_workers=4, pin_memory=False)
+
+        # push set
+        train_push_dataset = datasets.ImageFolder(
+            cfg.DATASET.TRAIN_PUSH_DIR,
+            transforms.Compose([
+                transforms.Resize(size=(cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE)),
+                transforms.ToTensor(),
+            ]))
+        train_push_loader = torch.utils.data.DataLoader(
+            train_push_dataset, batch_size=cfg.DATASET.TRAIN_PUSH_BATCH_SIZE, shuffle=False,
+            num_workers=4, pin_memory=False)
+
+        # test set
+        test_dataset = datasets.ImageFolder(
+            cfg.DATASET.TEST_DIR,
+            transforms.Compose([
+                transforms.Resize(size=(cfg.DATASET.IMAGE_SIZE, cfg.DATASET.IMAGE_SIZE)),
+                transforms.ToTensor(),
+                normalize,
+            ]))
+
+        test_loader = torch.utils.data.DataLoader(
+            test_dataset, batch_size=cfg.DATASET.TEST_BATCH_SIZE, shuffle=False,
+            num_workers=4, pin_memory=False)
+
+        log('training set size: {0}'.format(len(train_loader.dataset)))
+        log('push set size: {0}'.format(len(train_push_loader.dataset)))
+        log('test set size: {0}'.format(len(test_loader.dataset)))
+        log('batch size: {0}'.format(cfg.DATASET.TRAIN_BATCH_SIZE))
+
+    elif cfg.DATASET.NAME == "bioscan":
+        t = GeneticOneHot(length=cfg.DATASET.BIOSCAN.CHOP_LENGTH, zero_encode_unknown=True, include_height_channel=True)
+        d_train = GeneticDataset(os.path.abspath("data/BIOSCAN-1M/small_diptera_family-train.tsv"), transform=t, drop_level=cfg.DATASET.BIOSCAN.TAXONOMY_NAME, allowed_classes=[("order", [cfg.DATASET.BIOSCAN.ORDER_NAME])], one_label=cfg.DATASET.BIOSCAN.TAXONOMY_NAME)
+        classes, sizes = d_train.get_classes(cfg.DATASET.BIOSCAN.TAXONOMY_NAME)
+
+        # Create a test dataset, dropping all samples that don't have a family label, only allowing the order Diptera, and only allowing the families present in the training set
+        d_val = GeneticDataset(os.path.abspath("data/BIOSCAN-1M/small_diptera_family-validation.tsv"), transform=t, drop_level=cfg.DATASET.BIOSCAN.TAXONOMY_NAME, allowed_classes=[("order", [cfg.DATASET.BIOSCAN.ORDER_NAME]), ("family", d_train.get_classes(cfg.DATASET.BIOSCAN.TAXONOMY_NAME)[0])], one_label=cfg.DATASET.BIOSCAN.TAXONOMY_NAME, classes=classes)
+
+        # Create data loaders
+        train_loader = torch.utils.data.DataLoader(d_train, batch_size=128, shuffle=True)
+        test_loader = torch.utils.data.DataLoader(d_val, batch_size=32, shuffle=True)
+
+    log("=========================================")
+
+    return train_loader, train_push_loader, test_loader
 
 class BioscanDataset(Dataset): 
     '''

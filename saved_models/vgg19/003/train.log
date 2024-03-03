@@ -1,8 +1,0 @@
-training set size: 238739
-push set size: 5994
-test set size: 5794
-batch size: 80
-start training
-epoch: 	0
-	warm
-	train

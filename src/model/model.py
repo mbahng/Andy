@@ -28,12 +28,79 @@ base_architecture_to_features = {'resnet18': resnet18_features,
                                  'vgg19': vgg19_features,
                                  'vgg19_bn': vgg19_bn_features}
 
+def construct_ppnet(cfg): 
+    if cfg.DATASET.NAME == "cub": 
+        return construct_cub_ppnet(
+            base_architecture=cfg.MODEL.BACKBONE,
+            pretrained=True,
+            img_size=cfg.DATASET.IMAGE_SIZE, 
+            prototype_shape=cfg.MODEL.PROTOTYPE_SHAPE, 
+            num_classes=cfg.DATASET.NUM_CLASSES, 
+            prototype_activation_function=cfg.MODEL.PROTOTYPE_ACTIVATION_FUNCTION,
+            add_on_layers_type=cfg.MODEL.ADD_ON_LAYERS_TYPE
+        ).to(cfg.MODEL.DEVICE)
+    elif cfg.DATASET.NAME == "bioscan":
+        return construct_genetic_ppnet(
+            length=cfg.DATASET.BIOSCAN.CHOP_LENGTH, 
+            num_classes=cfg.DATASET.NUM_CLASSES, 
+            prototype_shape=cfg.MODEL.PROTOTYPE_SHAPE, 
+            model_path=cfg.MODEL.BACKBONE, 
+            prototype_activation_function=cfg.MODEL.PROTOTYPE_ACTIVATION_FUNCTION, 
+            use_cosine=cfg.MODEL.USE_COSINE
+        ).to(cfg.MODEL.DEVICE)
+    else: 
+        raise Exception("Constructing PPnet gone wrong. ")
+
+def construct_genetic_ppnet(length:int, num_classes:int, prototype_shape, model_path:str, prototype_activation_function='log', use_cosine=False):
+    m = GeneticCNN2D(length, num_classes, include_connected_layer=False)
+
+    # Remove the fully connected layer
+    weights = torch.load(model_path)
+    for k in list(weights.keys()):
+        if "conv" not in k:
+            del weights[k]
+    m.load_state_dict(weights)
+
+    return PPNet(features=m, 
+                 img_size=(4, 1, length), 
+                 prototype_shape=prototype_shape,
+                 proto_layer_rf_info=None, 
+                 num_classes=num_classes,
+                 init_weights=False, 
+                 prototype_activation_function=prototype_activation_function, 
+                 add_on_layers_type=None, 
+                 genetics_mode=True, 
+                 use_cosine=use_cosine)
+
+def construct_cub_ppnet(base_architecture, pretrained=True, img_size=224,
+                    prototype_shape=(2000, 512, 1, 1), num_classes=200,
+                    prototype_activation_function='log',
+                    add_on_layers_type='bottleneck'):
+    features = base_architecture_to_features[base_architecture](pretrained=pretrained)
+    layer_filter_sizes, layer_strides, layer_paddings = features.conv_info()
+    proto_layer_rf_info = compute_proto_layer_rf_info_v2(img_size=img_size,
+                                                         layer_filter_sizes=layer_filter_sizes,
+                                                         layer_strides=layer_strides,
+                                                         layer_paddings=layer_paddings,
+                                                         prototype_kernel_size=prototype_shape[2])
+    return PPNet(features=features,
+                 img_size=img_size,
+                 prototype_shape=prototype_shape,
+                 proto_layer_rf_info=proto_layer_rf_info,
+                 num_classes=num_classes,
+                 init_weights=True,
+                 prototype_activation_function=prototype_activation_function,
+                 add_on_layers_type=add_on_layers_type)
+
+
 class PPNet(nn.Module):
     def __init__(self, features, img_size, prototype_shape,
                  proto_layer_rf_info, num_classes, init_weights=True,
                  prototype_activation_function='log',
                  add_on_layers_type='bottleneck',
-                 genetics_mode=False):
+                 genetics_mode=False, 
+                 use_cosine=False
+         ):
 
         super(PPNet, self).__init__()
         self.img_size = img_size
@@ -41,10 +108,14 @@ class PPNet(nn.Module):
         self.num_prototypes = prototype_shape[0]
         self.num_classes = num_classes
         self.epsilon = 1e-4
+        self.use_cosine = use_cosine
         
         # prototype_activation_function could be 'log', 'linear',
         # or a generic function that converts distance to similarity score
         self.prototype_activation_function = prototype_activation_function
+
+        # Ensure that we're using linear with cosine similarity
+        assert(not (use_cosine and prototype_activation_function != "linear"))
 
         '''
         Here we are initializing the class identities of the prototypes
@@ -96,6 +167,8 @@ class PPNet(nn.Module):
                     add_on_layers.append(nn.Sigmoid())
                 current_in_channels = current_in_channels // 2
             self.add_on_layers = nn.Sequential(*add_on_layers)
+        elif add_on_layers_type == None:
+            self.add_on_layers = nn.Sequential()
         else:
             self.add_on_layers = nn.Sequential(
                 nn.Conv2d(in_channels=first_add_on_layer_in_channels, out_channels=self.prototype_shape[1], kernel_size=1),
@@ -176,8 +249,7 @@ class PPNet(nn.Module):
         '''
         x is the raw input
         '''
-        conv_features = self.conv_features(x)
-        distances = self._l2_convolution(conv_features)
+        distances = self._l2_convolution(x)
         return distances
 
     def distance_2_similarity(self, distances):
@@ -189,24 +261,44 @@ class PPNet(nn.Module):
             return self.prototype_activation_function(distances)
 
     def forward(self, x):
-        distances = self.prototype_distances(x)
-        '''
-        we cannot refactor the lines below for similarity scores
-        because we need to return min_distances
-        '''
-        # global min pooling
-        min_distances = -F.max_pool2d(-distances,
-                                      kernel_size=(distances.size()[2],
-                                                   distances.size()[3]))
+        conv_features = self.conv_features(x)
+        if self.use_cosine:
+            similarity = self.cosine_similarity(conv_features)
+            max_similarities = F.max_pool2d(similarity,
+                            kernel_size=(similarity.size()[2],
+                                        similarity.size()[3]))
+            min_distances = -1 * max_similarities
+        else:
+            distances = self.prototype_distances(conv_features)
+            '''
+            we cannot refactor the lines below for similarity scores
+            because we need to return min_distances
+            '''
+            # global min pooling
+            min_distances = -F.max_pool2d(-distances,
+                                        kernel_size=(distances.size()[2],
+                                                    distances.size()[3]))
         min_distances = min_distances.view(-1, self.num_prototypes)
         prototype_activations = self.distance_2_similarity(min_distances)
         logits = self.last_layer(prototype_activations)
         return logits, min_distances
 
+    def cosine_similarity(self, x):
+        sqrt_dims = (self.prototype_shape[2] * self.prototype_shape[3]) ** .5
+        x_norm = F.normalize(x, dim=1) / sqrt_dims
+        normalized_prototypes = F.normalize(self.prototype_vectors, dim=1) / sqrt_dims
+
+        return F.conv2d(x_norm, normalized_prototypes)
+
     def push_forward(self, x):
         '''this method is needed for the pushing operation'''
+        # Possibly better to go through and change push with this similarity metric
         conv_output = self.conv_features(x)
-        distances = self._l2_convolution(conv_output)
+        if self.use_cosine:
+            similarities = self.cosine_similarity(conv_output)
+            distances = -1 * similarities
+        else:
+            distances = self._l2_convolution(conv_output)
         return conv_output, distances
 
     def prune_prototypes(self, prototypes_to_prune):
@@ -285,25 +377,36 @@ class PPNet(nn.Module):
 
         self.set_last_layer_incorrect_connection(incorrect_strength=-0.5)
 
+class GeneticCNN2D(nn.Module):
+    """Takes a (4, length) tensor and returns a (class_count,) tensor.
 
+    Layers were chosen arbitrarily, and should be optimized. I have no idea what I'm doing.
+    """
 
-def construct_PPNet(base_architecture, pretrained=True, img_size=224,
-                    prototype_shape=(2000, 512, 1, 1), num_classes=200,
-                    prototype_activation_function='log',
-                    add_on_layers_type='bottleneck'):
-    features = base_architecture_to_features[base_architecture](pretrained=pretrained)
-    layer_filter_sizes, layer_strides, layer_paddings = features.conv_info()
-    proto_layer_rf_info = compute_proto_layer_rf_info_v2(img_size=img_size,
-                                                         layer_filter_sizes=layer_filter_sizes,
-                                                         layer_strides=layer_strides,
-                                                         layer_paddings=layer_paddings,
-                                                         prototype_kernel_size=prototype_shape[2])
-    return PPNet(features=features,
-                 img_size=img_size,
-                 prototype_shape=prototype_shape,
-                 proto_layer_rf_info=proto_layer_rf_info,
-                 num_classes=num_classes,
-                 init_weights=True,
-                 prototype_activation_function=prototype_activation_function,
-                 add_on_layers_type=add_on_layers_type)
+    # Drop last layer and load weights into Proto Layer
+
+    def __init__(self, length:int, class_count:int, include_connected_layer:bool):
+        super().__init__()
+        self.conv1 = nn.Conv2d(4, 16, kernel_size=(1,3), padding=(0,1))
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=(1,3), padding=(0,1))
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=(1,3), padding=(0,1))
+        self.conv4 = nn.Conv2d(64, 128, kernel_size=(1,3), padding=(0,1))
+        self.pool = nn.MaxPool2d(kernel_size=(1,2), stride=2)
+        self.pool3 = nn.MaxPool2d(kernel_size=(1,3), stride=3)
+
+        if include_connected_layer:
+            self.fc1 = nn.Linear(128 * (length // 8), class_count)
+
+    def forward(self, x):
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.conv3(x)))
+        x = F.relu(self.conv4(x))
+
+        if hasattr(self, 'fc1'):
+            x = torch.flatten(x, 1)
+            x = self.fc1(x)
+            # return F.log_softmax(x, dim=1)
+        return x
+    
 
