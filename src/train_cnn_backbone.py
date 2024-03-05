@@ -13,7 +13,7 @@ TAXONOMY_NAME = "family"
 ORDER_NAME = "Diptera"
 CHOP_LENGTH = 720
 # The blackbox model will be saved to model_dir/{FILE_NAME_BASE}_{EPOCH}.pth
-FILE_NAME_BASE = "onehot_128_4conv_30wide_40prototypes_per_class"
+FILE_NAME_BASE = "4conv-128"
 
 model_dir = os.path.join("saved_models", "bioscan_cnn_backbone")
 makedir(model_dir)
