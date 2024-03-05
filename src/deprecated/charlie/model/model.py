@@ -1,14 +1,36 @@
+"""
+Note to Muchang:
+
+The following things have been modified:
+- A couple of arguments
+- Much of the init function
+- forward
+- cosine_similary
+- push_forward
+
+(I believe that's all)
+"""
+
 import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
 
+<<<<<<< HEAD:src/charlie/model/model.py
+from src.model.resnet_features import resnet18_features, resnet34_features, resnet50_features, resnet101_features, resnet152_features
+from src.model.densenet_features import densenet121_features, densenet161_features, densenet169_features, densenet201_features
+from src.model.vgg_features import vgg11_features, vgg11_bn_features, vgg13_features, vgg13_bn_features, vgg16_features, vgg16_bn_features,\
+                         vgg19_features, vgg19_bn_features
+
+from src.postprocessing.receptive_field import compute_proto_layer_rf_info_v2
+=======
 from model.resnet_features import resnet18_features, resnet34_features, resnet50_features, resnet101_features, resnet152_features
 from model.densenet_features import densenet121_features, densenet161_features, densenet169_features, densenet201_features
 from model.vgg_features import vgg11_features, vgg11_bn_features, vgg13_features, vgg13_bn_features, vgg16_features, vgg16_bn_features,\
                          vgg19_features, vgg19_bn_features
 
 from postprocessing.receptive_field import compute_proto_layer_rf_info_v2
+>>>>>>> c60a47dd544723795b93f110c96df99f8f73a441:src/deprecated/charlie/model/model.py
 
 base_architecture_to_features = {'resnet18': resnet18_features,
                                  'resnet34': resnet34_features,
@@ -28,12 +50,21 @@ base_architecture_to_features = {'resnet18': resnet18_features,
                                  'vgg19': vgg19_features,
                                  'vgg19_bn': vgg19_bn_features}
 
+"""
+# Changes from default ProtoPNet
+add_on_layers_type - Pass None for no add on layers
+genetics_mode - True to support a GeneticCNN2D model
+use_cosine - True to use cosine similarity
+"""
+
 class PPNet(nn.Module):
     def __init__(self, features, img_size, prototype_shape,
                  proto_layer_rf_info, num_classes, init_weights=True,
                  prototype_activation_function='log',
                  add_on_layers_type='bottleneck',
-                 genetics_mode=False):
+                 genetics_mode=False,
+                 use_cosine=False
+        ):
 
         super(PPNet, self).__init__()
         self.img_size = img_size
@@ -41,11 +72,15 @@ class PPNet(nn.Module):
         self.num_prototypes = prototype_shape[0]
         self.num_classes = num_classes
         self.epsilon = 1e-4
+        self.use_cosine = use_cosine
         
         # prototype_activation_function could be 'log', 'linear',
         # or a generic function that converts distance to similarity score
         self.prototype_activation_function = prototype_activation_function
 
+        # Ensure that we're using linear with cosine similarity
+        assert(not (use_cosine and prototype_activation_function != "linear"))
+        
         '''
         Here we are initializing the class identities of the prototypes
         Without domain specific knowledge we allocate the same number of
@@ -96,6 +131,8 @@ class PPNet(nn.Module):
                     add_on_layers.append(nn.Sigmoid())
                 current_in_channels = current_in_channels // 2
             self.add_on_layers = nn.Sequential(*add_on_layers)
+        elif add_on_layers_type == None:
+            self.add_on_layers = nn.Sequential()
         else:
             self.add_on_layers = nn.Sequential(
                 nn.Conv2d(in_channels=first_add_on_layer_in_channels, out_channels=self.prototype_shape[1], kernel_size=1),
@@ -176,8 +213,7 @@ class PPNet(nn.Module):
         '''
         x is the raw input
         '''
-        conv_features = self.conv_features(x)
-        distances = self._l2_convolution(conv_features)
+        distances = self._l2_convolution(x)
         return distances
 
     def distance_2_similarity(self, distances):
@@ -189,24 +225,44 @@ class PPNet(nn.Module):
             return self.prototype_activation_function(distances)
 
     def forward(self, x):
-        distances = self.prototype_distances(x)
-        '''
-        we cannot refactor the lines below for similarity scores
-        because we need to return min_distances
-        '''
-        # global min pooling
-        min_distances = -F.max_pool2d(-distances,
-                                      kernel_size=(distances.size()[2],
-                                                   distances.size()[3]))
+        conv_features = self.conv_features(x)
+        if self.use_cosine:
+            similarity = self.cosine_similarity(conv_features)
+            max_similarities = F.max_pool2d(similarity,
+                            kernel_size=(similarity.size()[2],
+                                        similarity.size()[3]))
+            min_distances = -1 * max_similarities
+        else:
+            distances = self.prototype_distances(conv_features)
+            '''
+            we cannot refactor the lines below for similarity scores
+            because we need to return min_distances
+            '''
+            # global min pooling
+            min_distances = -F.max_pool2d(-distances,
+                                        kernel_size=(distances.size()[2],
+                                                    distances.size()[3]))
         min_distances = min_distances.view(-1, self.num_prototypes)
         prototype_activations = self.distance_2_similarity(min_distances)
         logits = self.last_layer(prototype_activations)
         return logits, min_distances
 
+    def cosine_similarity(self, x):
+        sqrt_dims = (self.prototype_shape[2] * self.prototype_shape[3]) ** .5
+        x_norm = F.normalize(x, dim=1) / sqrt_dims
+        normalized_prototypes = F.normalize(self.prototype_vectors, dim=1) / sqrt_dims
+
+        return F.conv2d(x_norm, normalized_prototypes)
+
     def push_forward(self, x):
         '''this method is needed for the pushing operation'''
+        # Possibly better to go through and change push with this similarity metric
         conv_output = self.conv_features(x)
-        distances = self._l2_convolution(conv_output)
+        if self.use_cosine:
+            similarities = self.cosine_similarity(conv_output)
+            distances = -1 * similarities
+        else:
+            distances = self._l2_convolution(conv_output)
         return conv_output, distances
 
     def prune_prototypes(self, prototypes_to_prune):

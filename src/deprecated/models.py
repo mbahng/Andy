@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 import torch.nn.functional as F
+<<<<<<< HEAD:src/models.py
 from src.model.model import PPNet
 
 def make_cnn(): 
@@ -22,6 +23,9 @@ class MLP(nn.Module):
         x = self.flatten(x)
         logits = self.linear_relu_stack(x)
         return logits
+=======
+from  model.model import PPNet 
+>>>>>>> c60a47dd544723795b93f110c96df99f8f73a441:src/deprecated/models.py
 
 class GeneticCNN2D(nn.Module):
     """Takes a (4, length) tensor and returns a (class_count,) tensor.
@@ -41,7 +45,7 @@ class GeneticCNN2D(nn.Module):
         self.pool3 = nn.MaxPool2d(kernel_size=(1,3), stride=3)
 
         if include_connected_layer:
-            self.fc1 = nn.Linear(128 * (length // 8 // 3), class_count)
+            self.fc1 = nn.Linear(128 * (length // 8), class_count)
 
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
